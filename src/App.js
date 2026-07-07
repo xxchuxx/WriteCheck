@@ -44,11 +44,7 @@ function App() {
 
         <Route
           path="/"
-          element={
-            session
-              ? <Navigate to="/dashboard" />
-              : <Startup />
-          }
+          element={<Startup/>}
         />
 
         <Route

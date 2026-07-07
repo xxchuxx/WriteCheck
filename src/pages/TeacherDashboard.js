@@ -4,11 +4,14 @@ import { supabase } from "../supabaseClient";
 import {
   ASSIGNMENT_TABLE,
   CLASSROOM_TABLE,
+  ClipboardIcon,
   MEMBER_TABLE,
   SUBMISSION_TABLE,
   DoorIcon,
+  FileIcon,
   FileSearchIcon,
   Header,
+  ImageIcon,
   PlusIcon,
   StatusMessage,
   UploadIcon,
@@ -22,9 +25,35 @@ import {
   openSubmissionFile,
   teacherPages,
 } from "./dashboard/shared";
+import {
+  ACCEPTED_CHECK_FILE_TYPES,
+  analyzePlagiarismInput,
+  formatFileSize,
+  getFileKind,
+  readTextFromFiles,
+} from "./dashboard/plagiarismScan";
+
+const uploadModes = [
+  {
+    id: "picture",
+    label: "Picture",
+    icon: ImageIcon,
+  },
+  {
+    id: "file",
+    label: "File",
+    icon: FileIcon,
+  },
+  {
+    id: "text",
+    label: "Paste",
+    icon: ClipboardIcon,
+  },
+];
+
 export default function TeacherDashboard({ profile }) {
   const [activePage, setActivePage] =
-    useState("classrooms");
+    useState("upload");
 
   const [classrooms, setClassrooms] =
     useState([]);
@@ -44,6 +73,27 @@ export default function TeacherDashboard({ profile }) {
   const [assignmentForm, setAssignmentForm] =
     useState(emptyAssignmentForm);
 
+  const [uploadMode, setUploadMode] =
+    useState("");
+
+  const [manualCheckTitle, setManualCheckTitle] =
+    useState("");
+
+  const [manualCheckText, setManualCheckText] =
+    useState("");
+
+  const [manualCheckFiles, setManualCheckFiles] =
+    useState([]);
+
+  const [manualImagePreview, setManualImagePreview] =
+    useState("");
+
+  const [manualCheckResult, setManualCheckResult] =
+    useState(null);
+
+  const [manualCheckError, setManualCheckError] =
+    useState("");
+
   const [isCreatingClassroom, setIsCreatingClassroom] =
     useState(false);
 
@@ -54,6 +104,9 @@ export default function TeacherDashboard({ profile }) {
     useState(false);
 
   const [isSavingAssignment, setIsSavingAssignment] =
+    useState(false);
+
+  const [isScanningManualCheck, setIsScanningManualCheck] =
     useState(false);
 
   const [errorMessage, setErrorMessage] =
@@ -264,6 +317,23 @@ export default function TeacherDashboard({ profile }) {
     loadTeacherData();
   }, [loadTeacherData]);
 
+  useEffect(() => {
+    const imageFile =
+      manualCheckFiles.find((file) => file.type?.startsWith("image/"));
+
+    if (!imageFile) {
+      setManualImagePreview("");
+      return undefined;
+    }
+
+    const previewUrl =
+      URL.createObjectURL(imageFile);
+
+    setManualImagePreview(previewUrl);
+
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [manualCheckFiles]);
+
   const handleCreateClassroom = async (event) => {
     event.preventDefault();
     setErrorMessage("");
@@ -356,6 +426,83 @@ export default function TeacherDashboard({ profile }) {
     await loadTeacherData();
   };
 
+  const handleManualCheckFiles = (event) => {
+    const nextFiles =
+      Array.from(event.target.files ?? []);
+
+    setManualCheckFiles(nextFiles);
+    setManualCheckResult(null);
+    setManualCheckError("");
+
+    if (nextFiles.length > 0 && uploadMode === "text") {
+      setUploadMode("file");
+    }
+  };
+
+  const handleRunManualCheck = async (event) => {
+    event.preventDefault();
+    setManualCheckError("");
+    setManualCheckResult(null);
+
+    if (!manualCheckText.trim() && manualCheckFiles.length === 0) {
+      setManualCheckError("Add a picture, file, or pasted text before scanning.");
+      return;
+    }
+
+    setIsScanningManualCheck(true);
+
+    try {
+      const fileText =
+        await readTextFromFiles(manualCheckFiles);
+
+      const combinedText =
+        [manualCheckText, fileText.text]
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .join("\n\n");
+
+      const result =
+        analyzePlagiarismInput({
+          text: combinedText,
+          files: manualCheckFiles,
+        });
+
+      setManualCheckResult({
+        ...result,
+        title: manualCheckTitle.trim() || "Manual plagiarism check",
+        readableFiles: fileText.readableFiles,
+        unreadableFiles: fileText.unreadableFiles,
+      });
+    } catch (error) {
+      setManualCheckError(error.message || "Could not scan the selected material.");
+    } finally {
+      setIsScanningManualCheck(false);
+    }
+  };
+
+  const handleResetManualCheck = () => {
+    setManualCheckTitle("");
+    setManualCheckText("");
+    setManualCheckFiles([]);
+    setManualCheckResult(null);
+    setManualCheckError("");
+    setUploadMode("");
+  };
+
+  const manualResultBadgeClass =
+    manualCheckResult?.tone === "red"
+      ? "bg-red-50 text-red-700"
+      : manualCheckResult?.tone === "amber"
+        ? "bg-amber-50 text-amber-700"
+        : "bg-emerald-50 text-emerald-700";
+
+  const manualResultRingClass =
+    manualCheckResult?.tone === "red"
+      ? "text-red-700 ring-red-100"
+      : manualCheckResult?.tone === "amber"
+        ? "text-amber-700 ring-amber-100"
+        : "text-emerald-700 ring-emerald-100";
+
   return (
     <div className="min-h-screen bg-[#f4f3ef] text-gray-950">
       <Header
@@ -365,7 +512,14 @@ export default function TeacherDashboard({ profile }) {
         onPageChange={setActivePage}
       />
 
-      <main className="mx-auto grid max-w-[1240px] gap-8 px-6 py-8 lg:grid-cols-[280px_1fr]">
+      <main
+        className={
+          activePage === "upload"
+            ? "mx-auto max-w-[1240px] px-6 py-8"
+            : "mx-auto grid max-w-[1240px] gap-8 px-6 py-8 lg:grid-cols-[280px_1fr]"
+        }
+      >
+        {activePage !== "upload" && (
         <aside className="space-y-4">
           <button
             type="button"
@@ -387,6 +541,15 @@ export default function TeacherDashboard({ profile }) {
           >
             <FileSearchIcon className="h-4 w-4" />
             New assignment
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActivePage("upload")}
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 text-sm font-extrabold text-gray-700 transition hover:bg-gray-50 hover:text-gray-950"
+          >
+            <UploadIcon className="h-4 w-4" />
+            Upload station
           </button>
 
           <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -440,6 +603,7 @@ export default function TeacherDashboard({ profile }) {
             </div>
           </div>
         </aside>
+        )}
 
         <section className="space-y-8">
           <StatusMessage
@@ -811,6 +975,327 @@ export default function TeacherDashboard({ profile }) {
                     </article>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activePage === "upload" && (
+            <div>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-sm font-extrabold uppercase tracking-normal text-emerald-700">
+                    Manual check
+                  </p>
+                  <h2 className="mt-2 text-4xl font-black tracking-normal">
+                    Upload station
+                  </h2>
+                  <p className="mt-2 max-w-[680px] text-base font-semibold leading-7 text-gray-500">
+                    Review student work from a photo, document, readable file, or pasted text.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleResetManualCheck}
+                  className="inline-flex h-11 w-fit items-center justify-center rounded-lg border border-gray-200 bg-white px-4 text-sm font-extrabold text-gray-700 transition hover:bg-gray-50 hover:text-gray-950"
+                >
+                  Clear station
+                </button>
+              </div>
+
+              <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-6 lg:min-h-[720px]">
+                <form
+                  onSubmit={handleRunManualCheck}
+                  className="flex min-h-[560px] flex-col rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-6"
+                >
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {uploadModes.map(({ id, label, icon: Icon }) => {
+                      const isActive =
+                        uploadMode === id;
+
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => {
+                            setUploadMode(id);
+                            setManualCheckResult(null);
+                            setManualCheckError("");
+                          }}
+                          className={
+                            isActive
+                              ? "flex min-h-[104px] flex-col items-center justify-center gap-3 rounded-lg border-2 border-emerald-700 bg-white px-4 text-sm font-extrabold text-emerald-800 shadow-sm"
+                              : "flex min-h-[104px] flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-4 text-sm font-extrabold text-gray-500 transition hover:border-emerald-300 hover:text-gray-950"
+                          }
+                        >
+                          <span className={isActive ? "grid h-11 w-11 place-items-center rounded-lg bg-emerald-100 text-emerald-700" : "grid h-11 w-11 place-items-center rounded-lg bg-gray-100 text-gray-500"}>
+                            <Icon className="h-5 w-5" />
+                          </span>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <label className="mt-6 block">
+                    <span className="text-sm font-extrabold text-gray-800">
+                      Check title
+                    </span>
+                    <input
+                      type="text"
+                      value={manualCheckTitle}
+                      onChange={(event) => setManualCheckTitle(event.target.value)}
+                      placeholder="Example: Grade 10 essay draft"
+                      className="mt-2 h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold outline-none transition placeholder:text-gray-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                    />
+                  </label>
+
+                  <div className="mt-5 flex flex-1 flex-col">
+                    {!uploadMode && (
+                      <div className="grid flex-1 min-h-[320px] place-items-center rounded-lg border-2 border-dashed border-gray-300 bg-white px-6 text-center">
+                        <div>
+                          <span className="mx-auto grid h-16 w-16 place-items-center rounded-lg bg-emerald-100 text-emerald-700">
+                            <UploadIcon className="h-8 w-8" />
+                          </span>
+                          <h3 className="mt-5 text-xl font-black text-gray-950">
+                            Choose a submission type first
+                          </h3>
+                          <p className="mt-2 max-w-[430px] text-sm font-semibold leading-6 text-gray-500">
+                            Pick picture, file, or pasted text above to open the right submission box.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {(uploadMode === "picture" || uploadMode === "file") && (
+                      <>
+                        <label className="flex flex-1 min-h-[360px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-white px-6 text-center transition hover:border-emerald-600 hover:bg-emerald-50">
+                          {manualImagePreview ? (
+                            <img
+                              src={manualImagePreview}
+                              alt="Manual check preview"
+                              className="max-h-[320px] w-full rounded-lg object-contain"
+                            />
+                          ) : (
+                            <>
+                              <span className="grid h-20 w-20 place-items-center rounded-lg bg-emerald-100 text-emerald-700">
+                                {uploadMode === "picture" ? (
+                                  <ImageIcon className="h-10 w-10" />
+                                ) : (
+                                  <UploadIcon className="h-10 w-10" />
+                                )}
+                              </span>
+                              <span className="mt-6 text-2xl font-black text-gray-950">
+                                {uploadMode === "picture" ? "Upload a picture" : "Upload a file"}
+                              </span>
+                              <span className="mt-2 max-w-[520px] text-sm font-semibold leading-6 text-gray-500">
+                                {uploadMode === "picture"
+                                  ? "Select a PNG, JPG, JPEG, or WEBP image of the student work."
+                                  : "Select a PDF, DOCX, TXT, MD, CSV, JSON, or other supported classroom file."}
+                              </span>
+                            </>
+                          )}
+                          <input
+                            type="file"
+                            accept={
+                              uploadMode === "picture"
+                                ? "image/png,image/jpeg,image/jpg,image/webp"
+                                : ACCEPTED_CHECK_FILE_TYPES
+                            }
+                            multiple
+                            onChange={handleManualCheckFiles}
+                            className="sr-only"
+                          />
+                        </label>
+
+                        {manualCheckFiles.length > 0 && (
+                          <div className="mt-5 rounded-lg border border-gray-200 bg-white">
+                            <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-gray-100 px-4 py-3 text-xs font-extrabold uppercase tracking-normal text-gray-500">
+                              <span>File</span>
+                              <span>Type</span>
+                              <span>Size</span>
+                            </div>
+
+                            {manualCheckFiles.map((file) => (
+                              <div
+                                key={`${file.name}-${file.size}-${file.lastModified}`}
+                                className="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-gray-100 px-4 py-3 text-sm last:border-b-0"
+                              >
+                                <span className="min-w-0 truncate font-extrabold text-gray-950">
+                                  {file.name}
+                                </span>
+                                <span className="font-bold text-gray-500">
+                                  {getFileKind(file)}
+                                </span>
+                                <span className="font-bold text-gray-500">
+                                  {formatFileSize(file.size)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {uploadMode === "text" && (
+                      <label className="flex flex-1 flex-col">
+                        <span className="text-sm font-extrabold text-gray-800">
+                          Paste text
+                        </span>
+                        <textarea
+                          value={manualCheckText}
+                          onChange={(event) => {
+                            setManualCheckText(event.target.value);
+                            setManualCheckResult(null);
+                          }}
+                          placeholder="Paste essay text, copied paragraphs, or OCR output here."
+                          className="mt-2 flex-1 min-h-[360px] w-full rounded-lg border border-gray-300 bg-white px-4 py-4 text-sm font-semibold leading-6 outline-none transition placeholder:text-gray-400 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  {manualCheckError && (
+                    <p className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                      {manualCheckError}
+                    </p>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isScanningManualCheck || !uploadMode}
+                    className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-5 text-base font-extrabold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                  >
+                    <FileSearchIcon className="h-5 w-5" />
+                    {isScanningManualCheck ? "Scanning..." : "Scan for plagiarism"}
+                  </button>
+                </form>
+
+                <section className="mt-6 rounded-lg border border-gray-200 bg-white p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-extrabold uppercase tracking-normal text-emerald-700">
+                        Detection result
+                      </p>
+                      <h3 className="mt-2 text-2xl font-black">
+                        {manualCheckResult?.title || "Ready to scan"}
+                      </h3>
+                    </div>
+
+                    {manualCheckResult && (
+                      <span className={`rounded-lg px-3 py-2 text-sm font-black ${manualResultBadgeClass}`}>
+                        {manualCheckResult.label}
+                      </span>
+                    )}
+                  </div>
+
+                  {manualCheckResult ? (
+                    <>
+                      <div className="mt-7 grid gap-4 sm:grid-cols-[160px_1fr]">
+                        <div className={`grid aspect-square place-items-center rounded-lg bg-white text-center ring-8 ${manualResultRingClass}`}>
+                          <div>
+                            <strong className="block text-5xl font-black">
+                              {manualCheckResult.score}
+                            </strong>
+                            <span className="mt-1 block text-xs font-extrabold uppercase tracking-normal text-gray-500">
+                              Risk score
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-lg bg-gray-50 p-4">
+                            <p className="text-2xl font-black text-gray-950">
+                              {manualCheckResult.wordCount}
+                            </p>
+                            <p className="mt-1 text-sm font-bold text-gray-500">
+                              Words scanned
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-50 p-4">
+                            <p className="text-2xl font-black text-gray-950">
+                              {manualCheckResult.sourceSignals}
+                            </p>
+                            <p className="mt-1 text-sm font-bold text-gray-500">
+                              Source markers
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-50 p-4">
+                            <p className="text-2xl font-black text-gray-950">
+                              {manualCheckResult.repeatedPhraseCount}
+                            </p>
+                            <p className="mt-1 text-sm font-bold text-gray-500">
+                              Repeated patterns
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-50 p-4">
+                            <p className="text-2xl font-black text-gray-950">
+                              {manualCheckResult.unreadableFiles.length}
+                            </p>
+                            <p className="mt-1 text-sm font-bold text-gray-500">
+                              OCR needed
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <p className="mt-6 text-sm font-semibold leading-6 text-gray-600">
+                        {manualCheckResult.summary}
+                      </p>
+
+                      <div className="mt-6">
+                        <p className="text-sm font-extrabold text-gray-800">
+                          Review signals
+                        </p>
+                        <div className="mt-3 space-y-2">
+                          {manualCheckResult.flags.map((flag) => (
+                            <p
+                              key={flag}
+                              className="rounded-lg border border-gray-200 px-4 py-3 text-sm font-semibold text-gray-600"
+                            >
+                              {flag}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+
+                      {manualCheckResult.repeatedPhrases.length > 0 && (
+                        <div className="mt-6">
+                          <p className="text-sm font-extrabold text-gray-800">
+                            Repeated phrases
+                          </p>
+                          <div className="mt-3 space-y-2">
+                            {manualCheckResult.repeatedPhrases.map((item) => (
+                              <p
+                                key={item.phrase}
+                                className="rounded-lg bg-gray-50 px-4 py-3 text-sm font-semibold leading-6 text-gray-600"
+                              >
+                                "{item.phrase}" appears {item.count} times
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="mt-8 grid min-h-[220px] place-items-center rounded-lg border-2 border-dashed border-gray-200 bg-gray-50 px-6 text-center">
+                      <div>
+                        <span className="mx-auto grid h-16 w-16 place-items-center rounded-lg bg-emerald-100 text-emerald-700">
+                          <FileSearchIcon className="h-8 w-8" />
+                        </span>
+                        <h3 className="mt-5 text-xl font-black text-gray-950">
+                          No scan result yet
+                        </h3>
+                        <p className="mt-2 max-w-[420px] text-sm font-semibold leading-6 text-gray-500">
+                          Add student work above, then run a plagiarism scan.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </section>
               </div>
             </div>
           )}

@@ -4,7 +4,9 @@ import { supabase } from "../supabaseClient";
 import {
   ASSIGNMENT_TABLE,
   CLASSROOM_TABLE,
+  ClipboardIcon,
   ESSAY_BUCKET,
+  FileIcon,
   MEMBER_TABLE,
   SUBMISSION_TABLE,
   Header,
@@ -12,13 +14,50 @@ import {
   PlusIcon,
   StatusMessage,
   UploadIcon,
-  emptySubmissionForm,
   formatDateTime,
   normalizeAssignment,
   normalizeClassroom,
   openSubmissionFile,
   studentPages,
 } from "./dashboard/shared";
+import {
+  ACCEPTED_CHECK_FILE_TYPES,
+  formatFileSize,
+  getFileKind,
+} from "./dashboard/plagiarismScan";
+
+const submissionModes = [
+  {
+    id: "picture",
+    label: "Picture",
+    icon: ImageIcon,
+  },
+  {
+    id: "file",
+    label: "File",
+    icon: FileIcon,
+  },
+  {
+    id: "text",
+    label: "Paste",
+    icon: ClipboardIcon,
+  },
+];
+
+const emptySubmissionDraft = {
+  assignmentId: "",
+  essayTitle: "",
+  mode: "",
+  text: "",
+};
+
+function sanitizeFileName(value) {
+  const cleanValue =
+    value.trim().replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-");
+
+  return cleanValue || "essay-submission";
+}
+
 export default function StudentDashboard({ profile }) {
   const [activePage, setActivePage] =
     useState("classrooms");
@@ -35,13 +74,16 @@ export default function StudentDashboard({ profile }) {
   const [joinCode, setJoinCode] =
     useState("");
 
-  const [submissionForm, setSubmissionForm] =
-    useState(emptySubmissionForm);
+  const [selectedClassroomId, setSelectedClassroomId] =
+    useState("");
 
-  const [selectedImage, setSelectedImage] =
+  const [submissionDraft, setSubmissionDraft] =
+    useState(emptySubmissionDraft);
+
+  const [submissionFile, setSubmissionFile] =
     useState(null);
 
-  const [imagePreview, setImagePreview] =
+  const [filePreview, setFilePreview] =
     useState("");
 
   const [isLoading, setIsLoading] =
@@ -60,8 +102,17 @@ export default function StudentDashboard({ profile }) {
     useState("");
 
   const selectedAssignment =
-    assignments.find((assignment) => assignment.id === submissionForm.assignmentId) ??
-    assignments[0];
+    assignments.find((assignment) => assignment.id === submissionDraft.assignmentId) ??
+    null;
+
+  const selectedClassroom =
+    classrooms.find((classroom) => classroom.id === selectedClassroomId) ??
+    null;
+
+  const visibleAssignments =
+    selectedClassroomId
+      ? assignments.filter((assignment) => assignment.classroomId === selectedClassroomId)
+      : assignments;
 
   const loadStudentData = useCallback(async () => {
     setIsLoading(true);
@@ -87,7 +138,9 @@ export default function StudentDashboard({ profile }) {
       setClassrooms([]);
       setAssignments([]);
       setSubmissions([]);
-      setSubmissionForm(emptySubmissionForm);
+      setSelectedClassroomId("");
+      setSubmissionDraft(emptySubmissionDraft);
+      setSubmissionFile(null);
       setIsLoading(false);
       return;
     }
@@ -224,12 +277,20 @@ export default function StudentDashboard({ profile }) {
     setClassrooms(nextClassrooms);
     setAssignments(nextAssignments);
     setSubmissions(nextSubmissions);
-    setSubmissionForm((currentForm) => ({
-      ...currentForm,
+    setSelectedClassroomId((currentId) =>
+      nextClassrooms.some((classroom) => classroom.id === currentId)
+        ? currentId
+        : nextClassrooms[0]?.id ?? ""
+    );
+    setSubmissionDraft((currentDraft) => ({
+      ...currentDraft,
       assignmentId:
-        nextAssignments.some((assignment) => assignment.id === currentForm.assignmentId)
-          ? currentForm.assignmentId
-          : nextAssignments[0]?.id ?? "",
+        nextAssignments.some(
+          (assignment) =>
+            assignment.id === currentDraft.assignmentId && !assignment.submitted
+        )
+          ? currentDraft.assignmentId
+          : "",
     }));
     setIsLoading(false);
   }, [profile.id]);
@@ -239,18 +300,18 @@ export default function StudentDashboard({ profile }) {
   }, [loadStudentData]);
 
   useEffect(() => {
-    if (!selectedImage) {
-      setImagePreview("");
+    if (!submissionFile || !submissionFile.type?.startsWith("image/")) {
+      setFilePreview("");
       return undefined;
     }
 
     const previewUrl =
-      URL.createObjectURL(selectedImage);
+      URL.createObjectURL(submissionFile);
 
-    setImagePreview(previewUrl);
+    setFilePreview(previewUrl);
 
     return () => URL.revokeObjectURL(previewUrl);
-  }, [selectedImage]);
+  }, [submissionFile]);
 
   const handleJoinClassroom = async (event) => {
     event.preventDefault();
@@ -322,12 +383,39 @@ export default function StudentDashboard({ profile }) {
     await loadStudentData();
   };
 
-  const handleSubmitEssay = async (event) => {
+  const handleViewClassroomAssignments = (classroomId) => {
+    setSelectedClassroomId(classroomId);
+    setSubmissionDraft(emptySubmissionDraft);
+    setSubmissionFile(null);
+    setActivePage("assignments");
+  };
+
+  const handleOpenSubmissionDraft = (assignment) => {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setSubmissionFile(null);
+    setSubmissionDraft({
+      ...emptySubmissionDraft,
+      assignmentId: assignment.id,
+      essayTitle: assignment.title,
+    });
+  };
+
+  const handleSubmissionModeChange = (mode) => {
+    setSubmissionFile(null);
+    setSubmissionDraft((currentDraft) => ({
+      ...currentDraft,
+      mode,
+      text: mode === "text" ? currentDraft.text : "",
+    }));
+  };
+
+  const handleSubmitAssignment = async (event) => {
     event.preventDefault();
     setErrorMessage("");
     setSuccessMessage("");
 
-    if (!selectedAssignment || !selectedImage) {
+    if (!selectedAssignment) {
       return;
     }
 
@@ -336,10 +424,46 @@ export default function StudentDashboard({ profile }) {
       return;
     }
 
+    if (!submissionDraft.mode) {
+      setErrorMessage("Choose a submission type first.");
+      return;
+    }
+
+    let uploadFile =
+      submissionFile;
+
+    const essayTitle =
+      submissionDraft.essayTitle.trim() || selectedAssignment.title;
+
+    if (submissionDraft.mode === "text") {
+      const cleanText =
+        submissionDraft.text.trim();
+
+      if (!cleanText) {
+        setErrorMessage("Paste your essay text before submitting.");
+        return;
+      }
+
+      uploadFile =
+        new File([cleanText], `${sanitizeFileName(essayTitle)}.txt`, {
+          type: "text/plain",
+        });
+    }
+
+    if (!uploadFile) {
+      setErrorMessage("Choose a file before submitting.");
+      return;
+    }
+
+    if (submissionDraft.mode === "picture" && !uploadFile.type?.startsWith("image/")) {
+      setErrorMessage("Choose an image file for picture submissions.");
+      return;
+    }
+
     setIsSubmittingEssay(true);
 
     const safeFileName =
-      selectedImage.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+      sanitizeFileName(uploadFile.name);
 
     const filePath =
       `${profile.id}/${selectedAssignment.id}/${Date.now()}-${safeFileName}`;
@@ -348,8 +472,8 @@ export default function StudentDashboard({ profile }) {
       await supabase
         .storage
         .from(ESSAY_BUCKET)
-        .upload(filePath, selectedImage, {
-          contentType: selectedImage.type,
+        .upload(filePath, uploadFile, {
+          contentType: uploadFile.type || "application/octet-stream",
         });
 
     if (uploadError) {
@@ -365,7 +489,7 @@ export default function StudentDashboard({ profile }) {
           assignment_id: selectedAssignment.id,
           classroom_id: selectedAssignment.classroomId,
           student_id: profile.id,
-          essay_title: submissionForm.essayTitle.trim() || selectedAssignment.title,
+          essay_title: essayTitle,
           file_url: filePath,
           status: "submitted",
         });
@@ -376,12 +500,9 @@ export default function StudentDashboard({ profile }) {
       return;
     }
 
-    setSuccessMessage("Essay submitted.");
-    setSubmissionForm({
-      ...emptySubmissionForm,
-      assignmentId: selectedAssignment.id,
-    });
-    setSelectedImage(null);
+    setSuccessMessage("Assignment submitted.");
+    setSubmissionDraft(emptySubmissionDraft);
+    setSubmissionFile(null);
     setIsSubmittingEssay(false);
     setActivePage("submissions");
     await loadStudentData();
@@ -507,7 +628,7 @@ export default function StudentDashboard({ profile }) {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setActivePage("assignments")}
+                      onClick={() => handleViewClassroomAssignments(classroom.id)}
                       className="mt-5 inline-flex h-10 w-full items-center justify-center rounded-lg border border-gray-200 text-sm font-extrabold text-gray-700 transition hover:bg-gray-50 hover:text-gray-950"
                     >
                       View assignments
@@ -520,25 +641,70 @@ export default function StudentDashboard({ profile }) {
         )}
 
         {activePage === "assignments" && (
-          <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
-            <section>
-              <p className="text-sm font-extrabold uppercase tracking-normal text-emerald-700">
-                Assignment bins
-              </p>
-              <h2 className="mt-2 text-4xl font-black tracking-normal">
-                Assigned essays
-              </h2>
-
-              <div className="mt-6 space-y-4">
-                {assignments.length === 0 && (
-                  <div className="rounded-lg border border-gray-200 bg-white p-6">
-                    <p className="text-sm font-bold text-gray-500">
-                      No assignments available yet.
-                    </p>
-                  </div>
+          <div>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-sm font-extrabold uppercase tracking-normal text-emerald-700">
+                  Assignment bins
+                </p>
+                <h2 className="mt-2 text-4xl font-black tracking-normal">
+                  Assigned essays
+                </h2>
+                {selectedClassroom && (
+                  <p className="mt-2 text-sm font-bold text-gray-500">
+                    {selectedClassroom.name} | {selectedClassroom.section}
+                  </p>
                 )}
+              </div>
 
-                {assignments.map((assignment) => (
+              {classrooms.length > 1 && (
+                <label className="block w-full sm:w-[280px]">
+                  <span className="text-sm font-extrabold text-gray-800">
+                    Classroom
+                  </span>
+                  <select
+                    value={selectedClassroomId}
+                    onChange={(event) => {
+                      setSelectedClassroomId(event.target.value);
+                      setSubmissionDraft(emptySubmissionDraft);
+                      setSubmissionFile(null);
+                    }}
+                    className="mt-2 h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                  >
+                    {classrooms.map((classroom) => (
+                      <option
+                        key={classroom.id}
+                        value={classroom.id}
+                      >
+                        {classroom.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+
+            <div className="mt-6 space-y-4">
+              {visibleAssignments.length === 0 && (
+                <div className="rounded-lg border border-gray-200 bg-white p-6">
+                  <p className="text-sm font-bold text-gray-500">
+                    No assignments available yet.
+                  </p>
+                </div>
+              )}
+
+              {visibleAssignments.map((assignment) => {
+                const isDraftOpen =
+                  submissionDraft.assignmentId === assignment.id;
+
+                const isSubmitDisabled =
+                  isSubmittingEssay ||
+                  !submissionDraft.mode ||
+                  (submissionDraft.mode === "text"
+                    ? !submissionDraft.text.trim()
+                    : !submissionFile);
+
+                return (
                   <article
                     key={assignment.id}
                     className="rounded-lg border border-gray-200 bg-white p-5"
@@ -569,129 +735,199 @@ export default function StudentDashboard({ profile }) {
                       </p>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSubmissionForm((currentForm) => ({
-                          ...currentForm,
-                          assignmentId: assignment.id,
-                        }))
-                      }
-                      disabled={assignment.submitted}
-                      className="mt-5 inline-flex h-10 items-center justify-center rounded-lg border border-gray-200 px-4 text-sm font-extrabold text-gray-700 transition hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-300"
-                    >
-                      Select
-                    </button>
+                    <div className="mt-5 flex flex-wrap gap-3">
+                      {assignment.submitted ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openSubmissionFile(
+                              assignment.submission?.file_url,
+                              setErrorMessage
+                            )
+                          }
+                          className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-200 px-4 text-sm font-extrabold text-gray-700 transition hover:bg-gray-50 hover:text-gray-950"
+                        >
+                          Open submission
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            isDraftOpen
+                              ? setSubmissionDraft(emptySubmissionDraft)
+                              : handleOpenSubmissionDraft(assignment)
+                          }
+                                                 
+                        
+                          className={
+                              isDraftOpen
+                                ? "inline-flex h-10 items-center justify-center rounded-lg border border-red-200 bg-red-600 px-4 text-sm font-extrabold text-white transition hover:bg-red-700"
+                                : "inline-flex h-10 items-center justify-center rounded-lg border border-gray-200 px-4 text-sm font-extrabold text-gray-700 transition hover:bg-gray-50 hover:text-gray-950"
+                            }   
+                        >
+                          {isDraftOpen ? "Close" :"Turn in"}
+                        </button>
+                      )}
+                    </div>
+
+                    {isDraftOpen && !assignment.submitted && (
+                      <form
+                        onSubmit={handleSubmitAssignment}
+                        className="mt-5 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5"
+                      >
+                        <label className="block">
+                          <span className="text-sm font-extrabold text-gray-800">
+                            Essay title
+                          </span>
+                          <input
+                            type="text"
+                            value={submissionDraft.essayTitle}
+                            onChange={(event) =>
+                              setSubmissionDraft((currentDraft) => ({
+                                ...currentDraft,
+                                essayTitle: event.target.value,
+                              }))
+                            }
+                            className="mt-2 h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                            required
+                          />
+                        </label>
+
+                        <div className="mt-5 grid gap-3 md:grid-cols-3">
+                          {submissionModes.map(({ id, label, icon: Icon }) => {
+                            const isActive =
+                              submissionDraft.mode === id;
+
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                onClick={() => handleSubmissionModeChange(id)}
+                                className={
+                                  isActive
+                                    ? "flex min-h-[104px] flex-col items-center justify-center gap-3 rounded-lg border-2 border-emerald-700 bg-white px-4 text-sm font-extrabold text-emerald-800 shadow-sm"
+                                    : "flex min-h-[104px] flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 bg-white px-4 text-sm font-extrabold text-gray-500 transition hover:border-emerald-300 hover:text-gray-950"
+                                }
+                              >
+                                <span className={isActive ? "grid h-11 w-11 place-items-center rounded-lg bg-emerald-100 text-emerald-700" : "grid h-11 w-11 place-items-center rounded-lg bg-gray-100 text-gray-500"}>
+                                  <Icon className="h-5 w-5" />
+                                </span>
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <div className="mt-5">
+                          {!submissionDraft.mode && (
+                            <div className="grid min-h-[260px] place-items-center rounded-lg border-2 border-dashed border-gray-300 bg-white px-6 text-center">
+                              <div>
+                                <span className="mx-auto grid h-16 w-16 place-items-center rounded-lg bg-emerald-100 text-emerald-700">
+                                  <UploadIcon className="h-8 w-8" />
+                                </span>
+                                <h3 className="mt-5 text-xl font-black text-gray-950">
+                                  Choose a submission type first
+                                </h3>
+                              </div>
+                            </div>
+                          )}
+
+                          {(submissionDraft.mode === "picture" || submissionDraft.mode === "file") && (
+                            <>
+                              <label className="flex min-h-[300px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-white px-6 text-center transition hover:border-emerald-600 hover:bg-emerald-50">
+                                {filePreview ? (
+                                  <img
+                                    src={filePreview}
+                                    alt="Selected submission preview"
+                                    className="max-h-[260px] w-full rounded-lg object-contain"
+                                  />
+                                ) : (
+                                  <>
+                                    <span className="grid h-20 w-20 place-items-center rounded-lg bg-emerald-100 text-emerald-700">
+                                      {submissionDraft.mode === "picture" ? (
+                                        <ImageIcon className="h-10 w-10" />
+                                      ) : (
+                                        <UploadIcon className="h-10 w-10" />
+                                      )}
+                                    </span>
+                                    <span className="mt-6 text-2xl font-black text-gray-950">
+                                      {submissionDraft.mode === "picture" ? "Upload a picture" : "Upload a file"}
+                                    </span>
+                                  </>
+                                )}
+                                <input
+                                  type="file"
+                                  accept={
+                                    submissionDraft.mode === "picture"
+                                      ? "image/png,image/jpeg,image/jpg,image/webp"
+                                      : ACCEPTED_CHECK_FILE_TYPES
+                                  }
+                                  onChange={(event) =>
+                                    setSubmissionFile(event.target.files?.[0] ?? null)
+                                  }
+                                  className="sr-only"
+                                  required
+                                />
+                              </label>
+
+                              {submissionFile && (
+                                <div className="mt-5 rounded-lg border border-gray-200 bg-white">
+                                  <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-gray-100 px-4 py-3 text-xs font-extrabold uppercase tracking-normal text-gray-500">
+                                    <span>File</span>
+                                    <span>Type</span>
+                                    <span>Size</span>
+                                  </div>
+
+                                  <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-4 py-3 text-sm">
+                                    <span className="min-w-0 truncate font-extrabold text-gray-950">
+                                      {submissionFile.name}
+                                    </span>
+                                    <span className="font-bold text-gray-500">
+                                      {getFileKind(submissionFile)}
+                                    </span>
+                                    <span className="font-bold text-gray-500">
+                                      {formatFileSize(submissionFile.size)}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {submissionDraft.mode === "text" && (
+                            <label className="block">
+                              <span className="text-sm font-extrabold text-gray-800">
+                                Paste text
+                              </span>
+                              <textarea
+                                value={submissionDraft.text}
+                                onChange={(event) =>
+                                  setSubmissionDraft((currentDraft) => ({
+                                    ...currentDraft,
+                                    text: event.target.value,
+                                  }))
+                                }
+                                className="mt-2 min-h-[300px] w-full rounded-lg border border-gray-300 bg-white px-4 py-4 text-sm font-semibold leading-6 outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                                required
+                              />
+                            </label>
+                          )}
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={isSubmitDisabled}
+                          className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-5 text-base font-extrabold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                        >
+                          <UploadIcon className="h-5 w-5" />
+                          {isSubmittingEssay ? "Submitting..." : "Submit assignment"}
+                        </button>
+                      </form>
+                    )}
                   </article>
-                ))}
-              </div>
-            </section>
-
-            <form
-              onSubmit={handleSubmitEssay}
-              className="h-fit rounded-lg border border-gray-200 bg-white p-6"
-            >
-              <p className="text-sm font-extrabold uppercase tracking-normal text-emerald-700">
-                Submit essay
-              </p>
-              <h3 className="mt-2 text-2xl font-black">
-                Upload image
-              </h3>
-
-              <label className="mt-6 block">
-                <span className="text-sm font-extrabold text-gray-800">
-                  Assignment
-                </span>
-                <select
-                  value={submissionForm.assignmentId}
-                  onChange={(event) =>
-                    setSubmissionForm((currentForm) => ({
-                      ...currentForm,
-                      assignmentId: event.target.value,
-                    }))
-                  }
-                  disabled={assignments.length === 0}
-                  className="mt-2 h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
-                  required
-                >
-                  {assignments.length === 0 && (
-                    <option value="">
-                      No assignments yet
-                    </option>
-                  )}
-                  {assignments.map((assignment) => (
-                    <option
-                      key={assignment.id}
-                      value={assignment.id}
-                      disabled={assignment.submitted}
-                    >
-                      {assignment.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="mt-5 block">
-                <span className="text-sm font-extrabold text-gray-800">
-                  Essay title
-                </span>
-                <input
-                  type="text"
-                  value={submissionForm.essayTitle}
-                  onChange={(event) =>
-                    setSubmissionForm((currentForm) => ({
-                      ...currentForm,
-                      essayTitle: event.target.value,
-                    }))
-                  }
-                  className="mt-2 h-11 w-full rounded-lg border border-gray-300 px-3 text-sm font-semibold outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
-                  required
-                />
-              </label>
-
-              <label className="mt-6 flex min-h-[260px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 px-6 text-center transition hover:border-emerald-600 hover:bg-emerald-50">
-                {imagePreview ? (
-                  <img
-                    src={imagePreview}
-                    alt="Selected essay submission preview"
-                    className="max-h-[230px] w-full rounded-lg object-contain"
-                  />
-                ) : (
-                  <>
-                    <span className="grid h-16 w-16 place-items-center rounded-lg bg-emerald-100 text-emerald-700">
-                      <ImageIcon className="h-8 w-8" />
-                    </span>
-                    <span className="mt-5 text-lg font-extrabold text-gray-950">
-                      Select essay image
-                    </span>
-                    <span className="mt-2 text-sm font-semibold text-gray-500">
-                      PNG, JPG, JPEG, or WEBP
-                    </span>
-                  </>
-                )}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,image/webp"
-                  onChange={(event) => setSelectedImage(event.target.files?.[0] ?? null)}
-                  className="sr-only"
-                  required
-                />
-              </label>
-
-              <button
-                type="submit"
-                disabled={
-                  isSubmittingEssay ||
-                  !selectedImage ||
-                  assignments.length === 0 ||
-                  selectedAssignment?.submitted
-                }
-                className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-5 text-base font-extrabold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-emerald-300"
-              >
-                <UploadIcon className="h-5 w-5" />
-                {isSubmittingEssay ? "Submitting..." : "Submit essay"}
-              </button>
-            </form>
+                );
+              })}
+            </div>
           </div>
         )}
 

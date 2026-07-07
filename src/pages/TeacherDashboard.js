@@ -470,6 +470,8 @@ export default function TeacherDashboard({ profile }) {
       setManualCheckResult({
         ...result,
         title: manualCheckTitle.trim() || "Manual plagiarism check",
+        extractedText: fileText.extractedText,
+        extractedImages: fileText.extractedImages,
         readableFiles: fileText.readableFiles,
         unreadableFiles: fileText.unreadableFiles,
       });
@@ -1246,6 +1248,17 @@ export default function TeacherDashboard({ profile }) {
                         {manualCheckResult.summary}
                       </p>
 
+                      {manualCheckResult.extractedText && (
+                        <div className="mt-6">
+                          <p className="text-sm font-extrabold text-gray-800">
+                            Extracted text
+                          </p>
+                          <pre className="mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold leading-6 text-gray-700">
+                            {manualCheckResult.extractedText}
+                          </pre>
+                        </div>
+                      )}
+
                       <div className="mt-6">
                         <p className="text-sm font-extrabold text-gray-800">
                           Review signals
@@ -1354,7 +1367,6 @@ export default function TeacherDashboard({ profile }) {
     </div>
   );
 }
-
 
 
 

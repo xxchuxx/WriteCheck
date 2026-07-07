@@ -21,3 +21,8 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# backend runtime files
+/backend/uploads/
+/backend/__pycache__/
+/backend/*.log

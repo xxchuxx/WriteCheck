@@ -392,6 +392,8 @@ export default function Startup() {
           text: combinedText,
           files: demoFiles,
         }),
+        extractedText: fileText.extractedText,
+        extractedImages: fileText.extractedImages,
         readableFiles: fileText.readableFiles,
         unreadableFiles: fileText.unreadableFiles,
       });
@@ -712,6 +714,17 @@ export default function Startup() {
                     <p className="mt-4 text-sm font-semibold leading-6 text-[var(--muted)]">
                       {demoResult.flags[0]}
                     </p>
+
+                    {demoResult.extractedText && (
+                      <div className="mt-4">
+                        <p className="text-xs font-extrabold uppercase tracking-normal text-[var(--muted)]">
+                          Extracted text
+                        </p>
+                        <pre className="mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-3 text-sm font-semibold leading-6 text-[var(--page-text)]">
+                          {demoResult.extractedText}
+                        </pre>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="grid grid-cols-4 items-start gap-4">

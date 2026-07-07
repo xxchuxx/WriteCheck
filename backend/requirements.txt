@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+ultralytics
+transformers
+pillow
+opencv-python
+torch
+tiktoken
+protobuf

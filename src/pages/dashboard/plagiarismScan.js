@@ -1,3 +1,5 @@
+import { extractTextFromImage } from "./ocrService";
+
 export const ACCEPTED_CHECK_FILE_TYPES =
   "image/png,image/jpeg,image/jpg,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv,application/json,.txt,.md,.csv,.json,.rtf,.pdf,.doc,.docx";
 
@@ -86,12 +88,38 @@ export function isReadableFile(file) {
   );
 }
 
+function isImageFile(file) {
+  return file?.type?.startsWith("image/");
+}
+
 export async function readTextFromFiles(files = []) {
   const readableFiles = [];
   const unreadableFiles = [];
   const textBlocks = [];
+  const extractedImages = [];
 
   for (const file of files) {
+    if (isImageFile(file)) {
+      const result =
+        await extractTextFromImage(file);
+
+      const imageText =
+        result.text.trim();
+
+      readableFiles.push(file);
+      extractedImages.push({
+        name: file.name,
+        text: imageText,
+        lines: result.lines ?? [],
+      });
+
+      if (imageText) {
+        textBlocks.push(`Image: ${file.name}\n${imageText}`);
+      }
+
+      continue;
+    }
+
     if (!isReadableFile(file)) {
       unreadableFiles.push(file);
       continue;
@@ -105,6 +133,12 @@ export async function readTextFromFiles(files = []) {
 
   return {
     text: textBlocks.join("\n\n"),
+    extractedText:
+      extractedImages
+        .map((image) => image.text)
+        .filter(Boolean)
+        .join("\n\n"),
+    extractedImages,
     readableFiles,
     unreadableFiles,
   };
@@ -169,7 +203,8 @@ export function analyzePlagiarismInput({ text = "", files = [] } = {}) {
   const sourceSignals = countSourceSignals(cleanText);
   const quoteMarks = (cleanText.match(/["']/g) ?? []).length;
   const longSentences = sentences.filter((sentence) => getWords(sentence).length > 36);
-  const readableFileCount = files.filter(isReadableFile).length;
+  const readableFileCount =
+    files.filter((file) => isReadableFile(file) || isImageFile(file)).length;
   const extractionNeeded = files.length > 0 && readableFileCount < files.length;
 
   if (!cleanText && files.length === 0) {

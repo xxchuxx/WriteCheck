@@ -468,44 +468,47 @@ export default function StudentDashboard({ profile }) {
     const filePath =
       `${profile.id}/${selectedAssignment.id}/${Date.now()}-${safeFileName}`;
 
-    const { error: uploadError } =
-      await supabase
-        .storage
-        .from(ESSAY_BUCKET)
-        .upload(filePath, uploadFile, {
-          contentType: uploadFile.type || "application/octet-stream",
-        });
+    try {
+      const { error: uploadError } =
+        await supabase
+          .storage
+          .from(ESSAY_BUCKET)
+          .upload(filePath, uploadFile, {
+            contentType: uploadFile.type || "application/octet-stream",
+          });
 
-    if (uploadError) {
-      setErrorMessage(uploadError.message);
+      if (uploadError) {
+        setErrorMessage(uploadError.message);
+        return;
+      }
+
+      const { error: submissionError } =
+        await supabase
+          .from(SUBMISSION_TABLE)
+          .insert({
+            assignment_id: selectedAssignment.id,
+            classroom_id: selectedAssignment.classroomId,
+            student_id: profile.id,
+            essay_title: essayTitle,
+            file_url: filePath,
+            status: "submitted",
+          });
+
+      if (submissionError) {
+        setErrorMessage(submissionError.message);
+        return;
+      }
+
+      setSuccessMessage("Assignment submitted.");
+      setSubmissionDraft(emptySubmissionDraft);
+      setSubmissionFile(null);
+      setActivePage("submissions");
+      await loadStudentData();
+    } catch (error) {
+      setErrorMessage(error.message || "Could not submit assignment.");
+    } finally {
       setIsSubmittingEssay(false);
-      return;
     }
-
-    const { error: submissionError } =
-      await supabase
-        .from(SUBMISSION_TABLE)
-        .insert({
-          assignment_id: selectedAssignment.id,
-          classroom_id: selectedAssignment.classroomId,
-          student_id: profile.id,
-          essay_title: essayTitle,
-          file_url: filePath,
-          status: "submitted",
-        });
-
-    if (submissionError) {
-      setErrorMessage(submissionError.message);
-      setIsSubmittingEssay(false);
-      return;
-    }
-
-    setSuccessMessage("Assignment submitted.");
-    setSubmissionDraft(emptySubmissionDraft);
-    setSubmissionFile(null);
-    setIsSubmittingEssay(false);
-    setActivePage("submissions");
-    await loadStudentData();
   };
 
   const displayName =
@@ -984,7 +987,6 @@ export default function StudentDashboard({ profile }) {
     </div>
   );
 }
-
 
 
 

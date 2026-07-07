@@ -385,7 +385,7 @@ export function Header({ workspace, pages, activePage, onPageChange }) {
             {workspace}
           </p>
           <h1 className="text-2xl font-black">
-            WriteCheck AI
+            WriteCheck
           </h1>
         </div>
 

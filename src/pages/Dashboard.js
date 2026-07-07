@@ -104,7 +104,7 @@ export default function Dashboard() {
       <div className="flex min-h-screen items-center justify-center bg-[#f4f3ef] px-6 text-center text-gray-950">
         <div>
           <p className="text-sm font-extrabold uppercase tracking-normal text-emerald-700">
-            WriteCheck AI
+            WriteCheck 
           </p>
           <h1 className="mt-3 text-3xl font-black">
             Loading dashboard

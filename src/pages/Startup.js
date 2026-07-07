@@ -435,12 +435,12 @@ export default function Startup() {
           <a
             href="#home"
             className="flex min-w-fit items-center gap-3 text-xl font-black text-[var(--page-text)]"
-            aria-label="WriteCheck AI home"
+            aria-label="WriteCheck home"
           >
             <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--accent)] text-white">
               <ImageIcon className="h-5 w-5" />
             </span>
-            <span>WriteCheck AI</span>
+            <span>WriteCheck</span>
           </a>
 
           <div className="hidden items-center gap-8 text-base font-bold text-[var(--muted)] md:flex lg:text-lg">
@@ -760,7 +760,7 @@ export default function Startup() {
               Built for educators checking original work
             </h2>
             <p className="mt-8 max-w-[570px] text-lg font-medium leading-8 text-[var(--muted)]">
-              WriteCheck AI gives teachers one place to collect essay scans, pasted text, and classroom submissions for plagiarism review.
+              WriteCheck gives teachers one place to collect essay scans, pasted text, and classroom submissions for plagiarism review.
             </p>
             <p className="mt-6 max-w-[570px] text-lg font-medium leading-8 text-[var(--muted)]">
               It is designed for schools that still use handwritten drafts, printed work, and mixed digital submissions in the same class.

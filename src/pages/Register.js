@@ -147,7 +147,7 @@ export default function Register() {
           </h1>
 
           <p className="mt-2 text-sm font-medium leading-6 text-gray-500">
-            Create your WriteCheck AI account to start checking essays.
+            Create your WriteCheck account to start checking essays.
           </p>
 
           <label className="mt-7 block text-sm font-extrabold text-gray-800">

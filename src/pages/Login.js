@@ -97,7 +97,7 @@ export default function Login() {
           </h1>
 
           <p className="mt-2 text-sm font-medium leading-6 text-gray-500">
-            Sign in to continue to your WriteCheck AI dashboard.
+            Sign in to continue to your WriteCheck dashboard.
           </p>
 
           <label className="mt-7 block text-sm font-extrabold text-gray-800">
